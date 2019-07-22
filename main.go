@@ -15,14 +15,18 @@ import (
 // nolint: gochecknoglobals
 var (
 	cmdConfigPath      string
+	cmdIncludeDir      string
 	cmdNewConfigSuffix string
+	cmdCleanIncludeDir bool
 )
 
 // nolint: gochecknoinits
 func init() {
 	// read command flags
-	flag.StringVar(&cmdConfigPath, "config", "/etc/mysql/my.cnf", "path to 'my.cnf'")
-	flag.StringVar(&cmdNewConfigSuffix, "suffix", ".new", "suffix for newly created 'my.cnf'")
+	flag.StringVar(&cmdConfigPath, "config", "/etc/mysql/my.cnf", "path to config, 'my.cnf'")
+	flag.StringVar(&cmdIncludeDir, "include-dir", "/etc/mysql/conf.d", "path to config include directory, 'conf.d'")
+	flag.BoolVar(&cmdCleanIncludeDir, "clean-include-dir", false, "clean include directory beforehand")
+	flag.StringVar(&cmdNewConfigSuffix, "suffix", ".new", "suffix for newly created config, 'my.cnf'")
 
 	flag.Parse()
 }
@@ -91,48 +95,43 @@ func readMySQLConfig(path string) (*ini.File, error) {
 	return config, nil
 }
 
-func createKeyFile(name, value, dir string) error {
-	// create include dir
-	if err := os.MkdirAll(dir, 0775); err != nil {
-		return err
-	}
-
-	// write key=value key.cnf
-	return ioutil.WriteFile(
-		filepath.Join(dir, name+".cnf"),
-		[]byte(fmt.Sprintf("%s = %s\n", name, value)),
-		0664,
-	)
-}
-
 func main() {
 	config, err := readMySQLConfig(cmdConfigPath)
 	if err != nil {
 		log.Fatalf("failed to read 'my.cnf' from: '%s'", cmdConfigPath)
 	}
 
-	// contains lines for new 'my.cnf'
-	newConfigContent := make([]string, 0)
-	// path to old 'my.cnf'
-	baseDir := filepath.Dir(cmdConfigPath)
+	if cmdCleanIncludeDir {
+		// clean include directory
+		if err := os.RemoveAll("/tmp/"); err != nil {
+			log.Fatal(err)
+		}
+	}
+
+	// create include directory
+	if err := os.MkdirAll(cmdIncludeDir, 0775); err != nil {
+		log.Fatal(err)
+	}
 
 	// loop-over config file sections
 	for _, section := range config.Sections() {
-		// compute new include directory path based on section name and base dir
-		includeDir := filepath.Join(baseDir, section.Name()+".d")
-		// append include rules to new config
-		newConfigContent = append(newConfigContent, fmt.Sprintf("[%s]\n!includedir %s\n", section.Name(), includeDir))
 		// loop-over keys in current config section
 		for _, key := range section.Keys() {
-			// create key file
-			if err := createKeyFile(key.Name(), key.Value(), includeDir); err != nil {
+			// prepare content for key=value config
+			content := fmt.Sprintf("[%s]\n%s = %s\n", section.Name(), key.Name(), key.Value())
+			// write key=value key.cnf
+			if err := ioutil.WriteFile(filepath.Join(cmdIncludeDir, key.Name()+".cnf"), []byte(content), 0664); err != nil {
 				log.Fatal(err)
 			}
 		}
 	}
 
 	// create new config file
-	if err := ioutil.WriteFile(cmdConfigPath+cmdNewConfigSuffix, []byte(strings.Join(newConfigContent, "\n")), 0664); err != nil {
+	if err := ioutil.WriteFile(
+		cmdConfigPath+cmdNewConfigSuffix,
+		[]byte(fmt.Sprintf("!includedir %s\n", cmdIncludeDir)),
+		0664,
+	); err != nil {
 		log.Fatal(err)
 	}
 }
