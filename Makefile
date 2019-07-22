@@ -7,7 +7,7 @@ all: clean build
 
 build:
 	$(GO_BIN) mod tidy
-	$(GO_BIN) build -ldflags="-s -w" -o $(OUT_BIN) -v
+	CGO_ENABLED=0 GOOS=linux $(GO_BIN) build -ldflags '-s -w -extldflags "-static"' -o $(OUT_BIN) -v
 
 update:
 	$(GO_BIN) get -u
